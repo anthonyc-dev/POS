@@ -1,0 +1,180 @@
+<?php
+session_start();
+include('config/config.php');
+include('config/checklogin.php');
+include('config/code-generator.php');
+
+check_login();
+
+// Enable error reporting for debugging
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
+if (isset($_POST['pay'])) {
+    if (empty($_POST["pay_code"]) || empty($_POST["pay_amt"]) || empty($_POST['pay_method']) || empty($_POST['amount_received'])) {
+        $err = "All fields are required.";
+    } else {
+        $pay_code = $_POST['pay_code'];
+        $order_code = $_GET['order_code'] ?? null;
+        $customer_id = $_GET['customer_id'] ?? null;
+        $pay_amt = $_POST['pay_amt'];
+        $pay_method = $_POST['pay_method'];
+        $pay_id = $_POST['pay_id'];
+        $amount_received = $_POST['amount_received'];
+        $order_status = 'Paid';
+
+        if ($amount_received < $pay_amt) {
+            $err = "Amount received cannot be less than the total payment amount.";
+        } else {
+            $postQuery = "INSERT INTO rpos_payments (pay_id, pay_code, order_code, customer_id, pay_amt, pay_method, amount_received, `change`) VALUES(?,?,?,?,?,?,?,?)";
+            $upQry = "UPDATE rpos_orders SET order_status = ? WHERE order_code = ?";
+
+            $postStmt = $mysqli->prepare(query: $postQuery);
+            $upStmt = $mysqli->prepare($upQry);
+
+            $change = $amount_received - $pay_amt;
+
+            $postStmt->bind_param('ssssssss', $pay_id, $pay_code, $order_code, $customer_id, $pay_amt, $pay_method, $amount_received, $change);
+            $upStmt->bind_param('ss', $order_status, $order_code);
+
+            if ($postStmt->execute() && $upStmt->execute()) {
+                $success = "Payment successfully recorded and order marked as Paid!";
+                echo "<script>
+                        Swal.fire({
+                            title: 'Success!',
+                            text: '$success',
+                            icon: 'success',
+                            confirmButtonText: 'OK'
+                        }).then(() => {
+                            window.location = 'receipts.php';
+                        });
+                    </script>";
+            } else {
+                $err = "Error: " . $mysqli->error;
+            }
+        }
+    }
+}
+
+require_once('partials/_head.php');
+?>
+
+<body>
+    <?php require_once('partials/_sidebar.php'); ?>
+    <div class="main-content">
+        <?php
+        require_once('partials/_topnav.php');
+        $order_code = $_GET['order_code'] ?? null;
+
+        if ($order_code) {
+            $ret = "SELECT * FROM rpos_orders WHERE order_code = ?";
+            $stmt = $mysqli->prepare($ret);
+            $stmt->bind_param('s', $order_code);
+            $stmt->execute();
+            $res = $stmt->get_result();
+
+            while ($order = $res->fetch_object()) {
+                $total = ($order->prod_price * $order->prod_qty);
+                $pay_method = $order->payment_method;
+                ?>
+                <div class="header pb-8 pt-5 pt-md-8"
+                    style="background-image: url(../admin/assets/img/theme/adminimg.avif); background-size: cover;">
+                    <span class="mask bg-gradient-dark opacity-8"></span>
+                    <div class="container-fluid">
+                        <div class="header-body"></div>
+                    </div>
+                </div>
+                <div class="container-fluid mt-5">
+                    <div class="row justify-content-center">
+                        <div class="col-lg-10">
+                            <div class="card shadow-lg border-0">
+                                <div class="card-header bg-gradient-primary text-white">
+                                    <h4 class="text-center mb-0">Complete Your Purchase</h4>
+                                </div>
+                                <div class="card-body">
+                                    <form method="POST">
+                                        <h5 class="text-muted mb-4">Payment Details</h5>
+                                        <div class="form-group row">
+                                            <label for="pay_id" class="col-md-3 col-form-label">Payment ID</label>
+                                            <div class="col-md-9">
+                                                <input type="text" name="pay_id" id="pay_id" readonly
+                                                    value="<?php echo $payid; ?>" class="form-control">
+                                            </div>
+                                        </div>
+                                        <div class="form-group row">
+                                            <label for="pay_code" class="col-md-3 col-form-label">Payment Code</label>
+                                            <div class="col-md-9">
+                                                <input type="text" name="pay_code" id="pay_code"
+                                                    value="<?php echo $mpesaCode; ?>" class="form-control">
+                                            </div>
+                                        </div>
+                                        <h5 class="text-muted mb-4">Payment Information</h5>
+                                        <div class="form-group row">
+                                            <label for="pay_amt" class="col-md-3 col-form-label">Amount (₱)</label>
+                                            <div class="col-md-9">
+                                                <input type="text" name="pay_amt" id="pay_amt" readonly
+                                                    value="<?php echo $total; ?>" class="form-control">
+                                            </div>
+                                        </div>
+                                        <div class="form-group row">
+                                            <label for="pay_method" class="col-md-3 col-form-label">Payment Method</label>
+                                            <div class="col-md-9">
+                                                <input type="text" name="pay_method" id="pay_method" readonly
+                                                    value="<?php echo $pay_method; ?>" class="form-control">
+                                            </div>
+                                        </div>
+                                        <h5 class="text-muted mb-4">Amount Received</h5>
+                                        <div class="form-group row">
+                                            <label for="amount_received" class="col-md-3 col-form-label">Amount Received
+                                                (₱)</label>
+                                            <div class="col-md-9">
+                                                <input type="number" name="amount_received" id="amount_received"
+                                                    class="form-control" placeholder="Enter Amount Received"
+                                                    oninput="calculateChange()">
+                                            </div>
+                                        </div>
+                                        <div class="form-group row">
+                                            <label for="change" class="col-md-3 col-form-label">Change (₱)</label>
+                                            <div class="col-md-9">
+                                                <input type="number" name="change" id="change" class="form-control" readonly>
+                                            </div>
+                                        </div>
+                                        <div class="form-group row">
+                                            <div class="col-md-9 offset-md-3">
+                                                <button type="submit" name="pay" class="btn btn-success btn-block">Pay
+                                                    Order</button>
+                                            </div>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <?php
+            }
+        } else {
+            echo "<p>Order not found.</p>";
+        }
+        ?>
+        <?php require_once('partials/_footer.php'); ?>
+    </div>
+    <?php require_once('partials/_scripts.php'); ?>
+    <script src="//cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script>
+        function calculateChange() {
+            var amountReceived = parseFloat(document.getElementById('amount_received').value) || 0;
+            var totalAmount = parseFloat(document.getElementById('pay_amt').value) || 0;
+            var change = amountReceived - totalAmount;
+
+            if (!isNaN(change) && change >= 0) {
+                document.getElementById('change').value = change.toFixed(2);
+            } else {
+                document.getElementById('change').value = '';
+            }
+        }
+    </script>
+</body>
+
+</html>
